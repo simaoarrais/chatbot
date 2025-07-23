@@ -1,0 +1,25 @@
+version: "3.8"
+
+services:
+  ollama:
+    image: ollama/ollama
+    container_name: ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_models:/root/.ollama
+
+  app:
+    build:
+      context: ./src
+      dockerfile: Dockerfile
+    container_name: chatbot
+    ports:
+      - "8501:8501"
+    env_file:
+      - src/.env
+    depends_on:
+      - ollama
+
+volumes:
+  ollama_models:
