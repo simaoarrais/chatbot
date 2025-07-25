@@ -2,7 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: ollama
-  namespace: chatbot
+  namespace: ollama-chatbot
 spec:
   replicas: 1
   selector:
@@ -19,8 +19,9 @@ spec:
           ports:
             - containerPort: 11434
           volumeMounts:
-            - name: ollama-data
+            - name: ollama-models
               mountPath: /root/.ollama
       volumes:
-        - name: ollama-data
-          emptyDir: {}
+        - name: ollama-models
+          persistentVolumeClaim:
+            claimName: ollama-models-pvc
