@@ -4,19 +4,26 @@ from dotenv import load_dotenv
 
 from langchain_ollama import ChatOllama
 from langchain_core.runnables import RunnableWithMessageHistory
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
+from langchain_core.messages import HumanMessage, AIMessage
+from langchain.prompts.chat import (
+    ChatPromptTemplate,
+    SystemMessagePromptTemplate,
+    HumanMessagePromptTemplate,
+    MessagesPlaceholder,
+)
+
 from langchain_community.chat_message_histories import StreamlitChatMessageHistory
 from langchain_community.document_loaders import ConfluenceLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_ollama import OllamaEmbeddings
 from langchain.vectorstores import FAISS
+from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 
 # Environment Setup
 load_dotenv()
 confluence_api_key = os.getenv("CONFLUENCE_API_KEY")
 confluence_space_key = os.getenv("CONFLUENCE_SPACE_KEY")
-confluence_url = os.getenv("CONLFLUENCE_URL")
+confluence_url = os.getenv("CONFLUENCE_URL")
 confluence_username = os.getenv("CONFLUENCE_USERNAME")
 ollama_base_url = os.getenv("OLLAMA_BASE_URL")
 
@@ -50,16 +57,14 @@ llm = ChatOllama(
 history = StreamlitChatMessageHistory(key="chat_messages")
 
 prompt = ChatPromptTemplate.from_messages([
-    SystemMessage(
-        content=(
-            "You are an expert in Counter Strike.\n"
-            "Use the following context from internal Confluence documents to answer the user's question accurately.\n"
-            "You are a chatbot responsible for summarizing confluence articles.\n"
-            "Context:\n{context}\n"
-        )
+    SystemMessagePromptTemplate.from_template(
+        "You are an expert in Counter Strike.\n"
+        "Use the following context from internal Confluence documents to answer the user's question accurately.\n"
+        "You are a chatbot responsible for summarizing confluence articles.\n"
+        "Context:\n{context}\n"
     ),
     MessagesPlaceholder(variable_name="history"),
-    HumanMessage(content="{question}")
+    HumanMessagePromptTemplate.from_template("{question}")
 ])
 
 def get_context(query):
