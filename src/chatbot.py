@@ -3,125 +3,94 @@ import streamlit as st
 from dotenv import load_dotenv
 
 from langchain_ollama import ChatOllama
-from langchain_core.runnables import RunnableWithMessageHistory
-from langchain_core.messages import HumanMessage, AIMessage
-from langchain.prompts.chat import (
-    ChatPromptTemplate,
-    SystemMessagePromptTemplate,
-    HumanMessagePromptTemplate,
-    MessagesPlaceholder,
-)
-
+from langchain.prompts import ChatPromptTemplate
+from langchain.agents import create_tool_calling_agent, AgentExecutor
 from langchain_community.chat_message_histories import StreamlitChatMessageHistory
-from langchain_community.document_loaders import ConfluenceLoader
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_ollama import OllamaEmbeddings
-from langchain.vectorstores import FAISS
-from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
+from langchain_core.runnables.history import RunnableWithMessageHistory
+from langchain.memory import ConversationBufferMemory
+from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.prompts import MessagesPlaceholder
 
-# Environment Setup
+from confluence_tool import confluence_tool
+from obsidian_tool import obsidian_tool
+
+# Load environment
 load_dotenv()
-confluence_api_key = os.getenv("CONFLUENCE_API_KEY")
-confluence_space_key = os.getenv("CONFLUENCE_SPACE_KEY")
-confluence_url = os.getenv("CONFLUENCE_URL")
-confluence_username = os.getenv("CONFLUENCE_USERNAME")
 ollama_base_url = os.getenv("OLLAMA_BASE_URL")
 
-# Load Documents from Confluence
-loader = ConfluenceLoader(
-    url=confluence_url,
-    username=confluence_username,
-    api_key=confluence_api_key,
-    space_key=confluence_space_key,
-    include_attachments=True,
-    limit=50
-)
-documents = loader.load()
-st.write(documents)
-
-text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
-docs_split = text_splitter.split_documents(documents)
-
-embedding_model = OllamaEmbeddings(model="nomic-embed-text", base_url=ollama_base_url)
-
-vectorstore = FAISS.from_documents(docs_split, embedding_model)
-retriever = vectorstore.as_retriever()
-
-# Initialize LLaMA Model
-llm = ChatOllama(
-    model="llama3.1:8b",
-    base_url = ollama_base_url
-)
-
-# Setup Chat History & Prompt
-history = StreamlitChatMessageHistory(key="chat_messages")
-
-prompt = ChatPromptTemplate.from_messages([
-    SystemMessagePromptTemplate.from_template(
-        "You are an expert in Counter Strike.\n"
-        "Use the following context from internal Confluence documents to answer the user's question accurately.\n"
-        "You are a chatbot responsible for summarizing confluence articles.\n"
-        "Context:\n{context}\n"
-    ),
-    MessagesPlaceholder(variable_name="history"),
-    HumanMessagePromptTemplate.from_template("{question}")
-])
-
-def get_context(query):
-    docs = retriever.get_relevant_documents(query)
-    return "\n\n".join(doc.page_content for doc in docs)
-
-chain = prompt | llm
-
-chain_with_history = RunnableWithMessageHistory(
-    chain,
-    lambda session_id: history,
-    input_messages_key="question",
-    history_messages_key="history"
-)
-
-# Streamlit Setup
-st.set_page_config(page_title="LLaMA", page_icon="🦙")
+# Streamlit UI
+st.set_page_config(page_title="LLaMA Chatbot", page_icon="🦙")
 st.title("🦙 LLaMA Chatbot")
-session_id = "streamlit-test"
-# session_id = st.session_state.get("user_id", "default-session")
+st.session_state["debug"] = True  # Enables Streamlit debugging in tools
 
-# Chat Interaction
-user_input = st.chat_input("Type your message")
+if st.session_state["debug"]:
+    session_id = "streamlit-test"
 
-if user_input:
-    context = get_context(user_input)
-
-    inputs = {
-        "context": context,
-        "question": user_input,
-    }
-
-    response = chain_with_history.invoke(
-        inputs,
-        config={"configurable": {"session_id": session_id}}
+# Define main LLM for reasoning
+agent_llm = ChatOllama(
+    model="llama3.1:8b", 
+    base_url=ollama_base_url,
+    temperature=0.7
     )
 
-    with st.expander("Retrieved Context (Confluence)"):
-        st.markdown(context)
+# Prompt with tool awareness
+prompt = ChatPromptTemplate.from_messages([
+    ("system", 
+        "You are an assistant that answers questions based on tool outputs.\n"
+        "You also have access to chat_history — the previous conversation.\n"
+        "Use chat_history or tools to track user intent, especially across multiple queries.\n"
+        "\n"
+        "The tools available are:\n"
+        "- **search_confluence**: Search Confluence documents for Counter-Strike lore.\n"
+        "- **search_obsidian**: Search Obsidian notes for work-related information.\n"
+        "\n"
+        "When the user continues a previous topic or adds details (e.g. mentions another source like Obsidian or Confluence),"
+        "combine the previous query context from chat_history with the new input to form a more complete tool query.\n"
+        "\n"
+        "If answering requires checking more than one source or tool, call each tool as needed before answering."
+    ),
+    MessagesPlaceholder(variable_name="chat_history"),
+    ("human", "{input}"),
+    ("placeholder", "{agent_scratchpad}")
+])
 
-    # st.write("DEBUG Prompt:", prompt)
-    # st.write("DEBUG Model:", response)
-    # st.write("Chat history:", st.session_state.messages)
+# Create agent with tool
+tools = [confluence_tool, obsidian_tool]
+agent = create_tool_calling_agent(agent_llm, tools, prompt)
+executor = AgentExecutor(
+    agent=agent, 
+    tools=tools,
+    verbose=True
+)
+
+# Initialize message history
+history = StreamlitChatMessageHistory(key="chat_messages")
+chain_with_history = RunnableWithMessageHistory(
+    executor,
+    lambda session_id: history,
+    input_messages_key="input",
+    history_messages_key="chat_history",
+)
 
 if st.button("🗑️ Clear Chat History"):
     history.clear()
     st.rerun()
 
-# Display Chat History
-def get_role_label(msg):
-    if isinstance(msg, HumanMessage):
-        return "🧑‍💻 You"
-    elif isinstance(msg, AIMessage):
-        return "🦙 LLaMA"
-    return ""
+# Display chat history
+for message in history.messages:
+    if message.type == "human":
+        st.chat_message("human").write(message.content)
+    elif message.type == "ai":
+        st.chat_message("ai").write(message.content)
 
-for msg in history.messages:
-    role = get_role_label(msg)
-    if role:
-        st.markdown(f"**{role}:** {msg.content}")
+# Chat UI
+user_input = st.chat_input("Type your message")
+if user_input:
+    st.chat_message("human").write(user_input)
+
+    with st.spinner("Thinking..."):
+        response = chain_with_history.invoke(
+            {"input": user_input},
+            config={"configurable": {"session_id": session_id}}
+        )
+        st.chat_message("ai").write(response['output'])
