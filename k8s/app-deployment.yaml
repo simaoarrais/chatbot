@@ -21,3 +21,11 @@ spec:
           envFrom:
             - configMapRef:
                 name: app-env
+          volumeMounts:
+            - name: obsidian-notes
+              mountPath: /app/vault
+      volumes:
+        - name: obsidian-notes
+          hostPath:
+            path: C:/Users/SimãoArrais/Documents/Work Vault/Work:/app/vault
+            type: Directory

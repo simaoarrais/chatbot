@@ -20,6 +20,8 @@ services:
       - src/.env
     depends_on:
       - ollama
+    volumes:
+      - "C:/Users/SimãoArrais/Documents/Work Vault/Work:/app/vault"
 
 volumes:
   ollama_models:
